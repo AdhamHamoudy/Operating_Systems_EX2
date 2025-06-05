@@ -17,9 +17,6 @@
 #include <sys/un.h>
 #include <filesystem>
 #include <fstream>
-#include <fcntl.h>
-#include <sys/file.h>
-#include <fstream>
 #define BUFFER_SIZE 1024
 
 void save_inventory_to_file(const std::string& filepath);
@@ -46,22 +43,6 @@ std::map<std::string, int> molecules = {
 std::vector<int> tcp_clients;
 int timeout_seconds = 0;
 
-void save_inventory_to_file(const std::string& path) {
-    int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd == -1) {
-        perror("[ERROR] open for write");
-        return;
-    }
-    flock(fd, LOCK_EX);
-    std::ofstream out(path);
-    for (const auto& kv : atoms) {
-        out << kv.first << " " << kv.second << "\n";
-    }
-    out.close();
-    flock(fd, LOCK_UN);
-    close(fd);
-    std::cout << "[SAVE] Inventory saved to " << path << " by PID " << getpid() << std::endl;
-}
 
 void print_atoms() {
     std::cout << "Current atom counts: ";
@@ -89,6 +70,18 @@ void reset_alarm() {
     if (timeout_seconds > 0) alarm(timeout_seconds);
 }
 
+void save_inventory_to_file(const std::string& filepath) {
+    std::ofstream out(filepath);
+    if (!out) {
+        std::cerr << "[ERROR] Failed to open file for saving: " << filepath << std::endl;
+        return;
+    }
+    for (const auto& pair : atoms) out << pair.first << " " << pair.second << "\n";
+    for (const auto& pair : molecules) out << pair.first << " " << pair.second << "\n";
+    out.close();
+    std::cout << "[INFO] Inventory saved to: " << filepath << std::endl;
+}
+
 void load_inventory_from_file(const std::string& filepath) {
     std::ifstream in(filepath);
     if (!in) return;
@@ -102,16 +95,13 @@ void load_inventory_from_file(const std::string& filepath) {
 }
 
 void handle_tcp_command(int client_sock) {
-    std::cout << "[DEBUG] handle_tcp_command called for FD=" << client_sock << std::endl;
     char buffer[BUFFER_SIZE];
     ssize_t len = recv(client_sock, buffer, BUFFER_SIZE - 1, 0);
     if (len <= 0) {
-        std::cout << "[DEBUG] TCP client disconnected: FD=" << client_sock << std::endl;
         close(client_sock);
         tcp_clients.erase(std::remove(tcp_clients.begin(), tcp_clients.end(), client_sock), tcp_clients.end());
         return;
     }
-    
 
     reset_alarm();
 
@@ -119,13 +109,11 @@ void handle_tcp_command(int client_sock) {
     std::string type;
     int amount;
 
-    char type_buf[64];
-    if (sscanf(buffer, "ADD %63s %d", type_buf, &amount) == 2) {
-        type = std::string(type_buf);
+    if (sscanf(buffer, "ADD %s %d", buffer, &amount) == 2) {
+        type = std::string(buffer);
         if (atoms.count(type)) {
             atoms[type] += amount;
             std::cout << "[TCP] Added " << amount << " of " << type << std::endl;
-            if (!save_file_path.empty()) save_inventory_to_file(save_file_path);
         } else {
             std::cout << "[TCP] Invalid atom type: " << type << std::endl;
         }
@@ -154,10 +142,8 @@ void handle_udp_command(int udp_sock) {
     std::istringstream iss(cmd);
     std::string deliver_word;
     iss >> deliver_word;
-    iss >> std::ws;
     std::getline(iss, molecule);
-    molecule.erase(molecule.find_last_not_of(" \n\r\t") + 1);
-
+    molecule.erase(0, molecule.find_first_not_of(" "));
 
     size_t pos = molecule.find_last_of(" ");
     if (pos != std::string::npos && isdigit(molecule[pos + 1])) {
@@ -174,27 +160,23 @@ void handle_udp_command(int udp_sock) {
             atoms["OXYGEN"] -= 1;
             molecules["WATER"]++;
             delivered++;
-            if (!save_file_path.empty()) save_inventory_to_file(save_file_path);
         } else if (molecule == "CARBON DIOXIDE" && atoms["CARBON"] >= 1 && atoms["OXYGEN"] >= 2) {
             atoms["CARBON"] -= 1;
             atoms["OXYGEN"] -= 2;
             molecules["CARBON DIOXIDE"]++;
             delivered++;
-            if (!save_file_path.empty()) save_inventory_to_file(save_file_path);
         } else if (molecule == "ALCOHOL" && atoms["CARBON"] >= 2 && atoms["HYDROGEN"] >= 6 && atoms["OXYGEN"] >= 1) {
             atoms["CARBON"] -= 2;
             atoms["HYDROGEN"] -= 6;
             atoms["OXYGEN"] -= 1;
             molecules["ALCOHOL"]++;
             delivered++;
-            if (!save_file_path.empty()) save_inventory_to_file(save_file_path);
         } else if (molecule == "GLUCOSE" && atoms["CARBON"] >= 6 && atoms["HYDROGEN"] >= 12 && atoms["OXYGEN"] >= 6) {
             atoms["CARBON"] -= 6;
             atoms["HYDROGEN"] -= 12;
             atoms["OXYGEN"] -= 6;
             molecules["GLUCOSE"]++;
             delivered++;
-            if (!save_file_path.empty()) save_inventory_to_file(save_file_path);
         } else {
             break;
         }
@@ -230,35 +212,28 @@ void handle_console_command(const std::string& input) {
 
 void handle_uds_stream_command(int client_sock) {
     char buffer[BUFFER_SIZE];
-    while (true) {
-        ssize_t len = recv(client_sock, buffer, BUFFER_SIZE - 1, 0);
-        if (len <= 0) break;
-
-        reset_alarm();
-
-        buffer[len] = '\0';
-        std::string type;
-        int amount;
-        char type_buf[64];
-        if (sscanf(buffer, "ADD %63s %d", type_buf, &amount) == 2) {
-            type = std::string(type_buf);
-            if (atoms.count(type)) {
-                atoms[type] += amount;
-                std::cout << "[UDS-STREAM] Added " << amount << " of " << type << std::endl;
-                if (!save_file_path.empty()) save_inventory_to_file(save_file_path);
-            } else {
-                std::cout << "[UDS-STREAM] Invalid atom type: " << type << std::endl;
-            }
-        } else {
-            std::cout << "[UDS-STREAM] Invalid command\n";
-        }
-
-        print_atoms();
+    ssize_t len = recv(client_sock, buffer, BUFFER_SIZE - 1, 0);
+    if (len <= 0) {
+        close(client_sock);
+        return;
     }
-
-    close(client_sock);
+    reset_alarm();
+    buffer[len] = '\0';
+    std::string type;
+    int amount;
+    if (sscanf(buffer, "ADD %s %d", buffer, &amount) == 2) {
+        type = std::string(buffer);
+        if (atoms.count(type)) {
+            atoms[type] += amount;
+            std::cout << "[UDS-STREAM] Added " << amount << " of " << type << std::endl;
+        } else {
+            std::cout << "[UDS-STREAM] Invalid atom type: " << type << std::endl;
+        }
+    } else {
+        std::cout << "[UDS-STREAM] Invalid command\n";
+    }
+    print_atoms();
 }
-
 
 void handle_uds_dgram_command() {
     char buffer[BUFFER_SIZE];
@@ -271,7 +246,6 @@ void handle_uds_dgram_command() {
 
     buffer[len] = '\0';
     std::string cmd(buffer);
-    std::cout << "[DEBUG] Received UDS-DGRAM command: " << cmd << std::endl;
     std::string molecule;
     int count = 1;
 
@@ -295,27 +269,23 @@ void handle_uds_dgram_command() {
             atoms["OXYGEN"] -= 1;
             molecules["WATER"]++;
             delivered++;
-            if (!save_file_path.empty()) save_inventory_to_file(save_file_path);
         } else if (molecule == "CARBON DIOXIDE" && atoms["CARBON"] >= 1 && atoms["OXYGEN"] >= 2) {
             atoms["CARBON"] -= 1;
             atoms["OXYGEN"] -= 2;
             molecules["CARBON DIOXIDE"]++;
             delivered++;
-            if (!save_file_path.empty()) save_inventory_to_file(save_file_path);
         } else if (molecule == "ALCOHOL" && atoms["CARBON"] >= 2 && atoms["HYDROGEN"] >= 6 && atoms["OXYGEN"] >= 1) {
             atoms["CARBON"] -= 2;
             atoms["HYDROGEN"] -= 6;
             atoms["OXYGEN"] -= 1;
             molecules["ALCOHOL"]++;
             delivered++;
-            if (!save_file_path.empty()) save_inventory_to_file(save_file_path);
         } else if (molecule == "GLUCOSE" && atoms["CARBON"] >= 6 && atoms["HYDROGEN"] >= 12 && atoms["OXYGEN"] >= 6) {
             atoms["CARBON"] -= 6;
             atoms["HYDROGEN"] -= 12;
             atoms["OXYGEN"] -= 6;
             molecules["GLUCOSE"]++;
             delivered++;
-            if (!save_file_path.empty()) save_inventory_to_file(save_file_path);
         } else {
             break;
         }
@@ -345,15 +315,12 @@ int main(int argc, char* argv[]) {
         {"hydrogen", required_argument, nullptr, 'h'},
         {"stream-path", required_argument, nullptr, 's'},
         {"datagram-path", required_argument, nullptr, 'd'},
-        {"save-file", required_argument, nullptr, 'f'},  // ✅ רק אחת!
+        {"save-file", required_argument, nullptr, 'f'},
         {nullptr, 0, nullptr, 0}
-    };    
+    };
 
     while ((opt = getopt_long(argc, argv, "t:T:U:o:c:h:s:d:f:", long_options, nullptr)) != -1) {
         switch (opt) {
-            case 'f':
-            save_file_path = optarg;
-            break;
             case 't': timeout_seconds = std::atoi(optarg); break;
             case 'T': tcp_port = std::atoi(optarg); break;
             case 'U': udp_port = std::atoi(optarg); break;
@@ -362,20 +329,17 @@ int main(int argc, char* argv[]) {
             case 'h': atoms["HYDROGEN"] = std::atoi(optarg); break;
             case 's': uds_stream_path = optarg; break;
             case 'd': uds_dgram_path = optarg; break;
+            case 'f':
+                save_file_path = optarg;
+                load_inventory_from_file(save_file_path);
+                break;
             default:
                 std::cerr << "Usage: " << argv[0]
                           << " -T <tcp_port> -U <udp_port> [-t timeout] [-o O] [-c C] [-h H] [-s stream_path] [-d dgram_path] [-f save_file]\n";
                 return 1;
         }
     }
-    if (!save_file_path.empty()) {
-        if (access(save_file_path.c_str(), F_OK) == 0) {
-            load_inventory_from_file(save_file_path);
-        } else {
-            save_inventory_to_file(save_file_path);
-        }
-    }
-    
+
     signal(SIGALRM, timeout_handler);
     signal(SIGINT, handle_sigint);
     reset_alarm();
@@ -447,25 +411,15 @@ int main(int argc, char* argv[]) {
             if (fgets(input, sizeof(input), stdin)) {
                 std::string command(input);
                 command.erase(std::remove(command.begin(), command.end(), '\n'), command.end());
-                command.erase(0, command.find_first_not_of(" \t"));
-                command.erase(command.find_last_not_of(" \t") + 1);
-                std::transform(command.begin(), command.end(), command.begin(), ::toupper);
                 handle_console_command(command);
                 reset_alarm();
             }
         }
-        
 
         if (FD_ISSET(tcp_sock, &read_fds)) {
             int new_client = accept(tcp_sock, nullptr, nullptr);
-            if (new_client >= 0) {
-                std::cout << "[DEBUG] New TCP client accepted: FD=" << new_client << std::endl;
-                tcp_clients.push_back(new_client);
-            } else {
-                perror("[ERROR] accept");
-            }
+            if (new_client >= 0) tcp_clients.push_back(new_client);
         }
-        
 
         if (FD_ISSET(udp_sock, &read_fds)) {
             handle_udp_command(udp_sock);

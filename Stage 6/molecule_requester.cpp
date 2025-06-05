@@ -1,3 +1,4 @@
+
 // File: molecule_requester.cpp
 // Description: Sends molecule requests via UDP or UDS-DGRAM to warehouse
 
@@ -25,6 +26,8 @@ int main(int argc, char* argv[]) {
     sockaddr_storage server_addr{};
     socklen_t server_addr_len = 0;
     bool is_uds = false;
+    std::string server_ip = "";
+    int port = 0;
 
     if (argc == 3 && std::string(argv[1]) == "-f") {
         // UDS-DGRAM mode
@@ -60,7 +63,7 @@ int main(int argc, char* argv[]) {
     else if (argc == 3) {
         // UDP mode
         const char* hostname = argv[1];
-        int port = 0;
+        server_ip = hostname;
         try {
             port = std::stoi(argv[2]);
         } catch (...) {
@@ -87,7 +90,7 @@ int main(int argc, char* argv[]) {
         std::memcpy(&udp_addr->sin_addr.s_addr, server->h_addr, server->h_length);
         server_addr_len = sizeof(sockaddr_in);
 
-        std::cout << "Connected to warehouse via UDP: " << hostname << ":" << port << std::endl;
+        std::cout << "Connected to warehouse via UDP: " << server_ip << ":" << port << std::endl;
     }
 
     else {
