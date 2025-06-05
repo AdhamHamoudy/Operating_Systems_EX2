@@ -206,24 +206,15 @@ while ((opt = getopt_long(argc, argv, "t:T:U:o:c:h:", long_options, nullptr)) !=
     tcp_addr.sin_family = AF_INET;
     tcp_addr.sin_port = htons(tcp_port);
     tcp_addr.sin_addr.s_addr = INADDR_ANY;
-    if (bind(tcp_sock, (sockaddr*)&tcp_addr, sizeof(tcp_addr)) < 0) {
-        perror("bind tcp");
-        return 1;
-    }
-    if (listen(tcp_sock, 5) < 0) {
-        perror("listen tcp");
-        return 1;
-    }
+    bind(tcp_sock, (sockaddr*)&tcp_addr, sizeof(tcp_addr));
+    listen(tcp_sock, 5);
 
     int udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
     sockaddr_in udp_addr{};
     udp_addr.sin_family = AF_INET;
     udp_addr.sin_port = htons(udp_port);
     udp_addr.sin_addr.s_addr = INADDR_ANY;
-    if (bind(udp_sock, (sockaddr*)&udp_addr, sizeof(udp_addr)) < 0) {
-        perror("bind udp");
-        return 1;
-    }
+    bind(udp_sock, (sockaddr*)&udp_addr, sizeof(udp_addr));
 
     std::cout << "Atom Warehouse (Stage 4) started.\n";
     print_atoms();
@@ -259,11 +250,7 @@ while ((opt = getopt_long(argc, argv, "t:T:U:o:c:h:", long_options, nullptr)) !=
 
         if (FD_ISSET(tcp_sock, &read_fds)) {
             int new_client = accept(tcp_sock, nullptr, nullptr);
-            if (new_client >= 0) {
-                tcp_clients.push_back(new_client);
-            } else {
-                perror("accept");
-            }
+            tcp_clients.push_back(new_client);
         }
 
         if (FD_ISSET(udp_sock, &read_fds)) {

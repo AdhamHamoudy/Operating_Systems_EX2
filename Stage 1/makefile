@@ -35,6 +35,10 @@ run-server: $(WAREHOUSE_BIN)
 run-client: $(SUPPLIER_BIN)
 	./$(SUPPLIER_BIN) 127.0.0.1 5555
 
+clean-ports:
+	sudo fuser -k 5555/tcp || true
+	sudo fuser -k 6666/udp || true
+
 # Clean compiled binaries
 clean:
 	rm -f $(WAREHOUSE_BIN) $(SUPPLIER_BIN)

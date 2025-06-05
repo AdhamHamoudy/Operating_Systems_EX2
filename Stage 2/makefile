@@ -23,5 +23,9 @@ run-server:
 run-client:
 	./molecule_requester 127.0.0.1 6666
 
+clean-ports:
+	sudo fuser -k 5555/tcp || true
+	sudo fuser -k 6666/udp || true
+
 clean:
 	rm -f $(TARGETS)
