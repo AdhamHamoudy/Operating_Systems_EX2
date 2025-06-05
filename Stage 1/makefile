@@ -1,12 +1,7 @@
-# Makefile for Stage 1 - Operating Systems Assignment
-# Builds the atom warehouse server and the atom supplier client
-
-#to kill the port
-#sudo kill -9 $(sudo lsof -t -i :5555)
-
+# Updated Makefile for Stage 1 with Code Coverage support
 
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra -Werror -pedantic
+CXXFLAGS = -std=c++17 -Wall -Wextra -Werror -pedantic --coverage
 
 # Source files
 WAREHOUSE_SRC = atom_warehouse.cpp
@@ -35,12 +30,15 @@ run-server: $(WAREHOUSE_BIN)
 run-client: $(SUPPLIER_BIN)
 	./$(SUPPLIER_BIN) 127.0.0.1 5555
 
+# Generate coverage report for warehouse
+coverage: $(WAREHOUSE_BIN)
+	./$(WAREHOUSE_BIN) 5555 & sleep 2; pkill -f $(WAREHOUSE_BIN) || true
+	gcov $(WAREHOUSE_SRC)
+
+# Clean up coverage and build artifacts
+clean:
+	rm -f $(WAREHOUSE_BIN) $(SUPPLIER_BIN) *.gcno *.gcda *.gcov
+
 clean-ports:
 	sudo fuser -k 5555/tcp || true
 	sudo fuser -k 6666/udp || true
-
-# Clean compiled binaries
-clean:
-	rm -f $(WAREHOUSE_BIN) $(SUPPLIER_BIN)
-
-
