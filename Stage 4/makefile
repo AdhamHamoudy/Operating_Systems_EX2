@@ -9,6 +9,8 @@ atom_supplier: atom_supplier.cpp
 molecule_requester: molecule_requester.cpp
 	g++ -o molecule_requester molecule_requester.cpp
 
+
+#IF didn't work sudo lsof -i :5555
 clean-ports:
 	sudo fuser -k 5555/tcp || true
 	sudo fuser -k 6666/udp || true

@@ -16,12 +16,16 @@
 #include <getopt.h>
 #include <sys/un.h>
 #include <filesystem>
-
+#include <fstream>
 #define BUFFER_SIZE 1024
+
+void save_inventory_to_file(const std::string& filepath);
+void load_inventory_from_file(const std::string& filepath);
 
 // === UDS globals ===
 int uds_stream_sock = -1, uds_dgram_sock = -1;
 std::string uds_stream_path, uds_dgram_path;
+std::string save_file_path;
 
 std::map<std::string, int> atoms = {
     {"HYDROGEN", 0},
@@ -47,6 +51,16 @@ void print_atoms() {
     std::cout << std::endl;
 }
 
+
+void handle_sigint(int) {
+    std::cout << "\n[EXIT] Caught Ctrl+C, saving inventory..." << std::endl;
+    if (!save_file_path.empty()) {
+        save_inventory_to_file(save_file_path);
+    }
+    exit(0);
+}
+
+
 void timeout_handler(int) {
     std::cout << "\n[TIMEOUT] No activity received within " << timeout_seconds << " seconds. Shutting down.\n";
     exit(0);
@@ -54,6 +68,30 @@ void timeout_handler(int) {
 
 void reset_alarm() {
     if (timeout_seconds > 0) alarm(timeout_seconds);
+}
+
+void save_inventory_to_file(const std::string& filepath) {
+    std::ofstream out(filepath);
+    if (!out) {
+        std::cerr << "[ERROR] Failed to open file for saving: " << filepath << std::endl;
+        return;
+    }
+    for (const auto& pair : atoms) out << pair.first << " " << pair.second << "\n";
+    for (const auto& pair : molecules) out << pair.first << " " << pair.second << "\n";
+    out.close();
+    std::cout << "[INFO] Inventory saved to: " << filepath << std::endl;
+}
+
+void load_inventory_from_file(const std::string& filepath) {
+    std::ifstream in(filepath);
+    if (!in) return;
+    std::string key;
+    int value;
+    while (in >> key >> value) {
+        if (atoms.count(key)) atoms[key] = value;
+        else if (molecules.count(key)) molecules[key] = value;
+    }
+    std::cout << "[INFO] Inventory loaded from: " << filepath << std::endl;
 }
 
 void handle_tcp_command(int client_sock) {
@@ -174,34 +212,28 @@ void handle_console_command(const std::string& input) {
 
 void handle_uds_stream_command(int client_sock) {
     char buffer[BUFFER_SIZE];
-    while (true) {
-        ssize_t len = recv(client_sock, buffer, BUFFER_SIZE - 1, 0);
-        if (len <= 0) {
-            close(client_sock);
-            return;
-        }
-
-        reset_alarm();
-        buffer[len] = '\0';
-
-        std::string type;
-        int amount;
-        if (sscanf(buffer, "ADD %s %d", buffer, &amount) == 2) {
-            type = std::string(buffer);
-            if (atoms.count(type)) {
-                atoms[type] += amount;
-                std::cout << "[UDS-STREAM] Added " << amount << " of " << type << std::endl;
-            } else {
-                std::cout << "[UDS-STREAM] Invalid atom type: " << type << std::endl;
-            }
-        } else {
-            std::cout << "[UDS-STREAM] Invalid command\n";
-        }
-
-        print_atoms();
+    ssize_t len = recv(client_sock, buffer, BUFFER_SIZE - 1, 0);
+    if (len <= 0) {
+        close(client_sock);
+        return;
     }
+    reset_alarm();
+    buffer[len] = '\0';
+    std::string type;
+    int amount;
+    if (sscanf(buffer, "ADD %s %d", buffer, &amount) == 2) {
+        type = std::string(buffer);
+        if (atoms.count(type)) {
+            atoms[type] += amount;
+            std::cout << "[UDS-STREAM] Added " << amount << " of " << type << std::endl;
+        } else {
+            std::cout << "[UDS-STREAM] Invalid atom type: " << type << std::endl;
+        }
+    } else {
+        std::cout << "[UDS-STREAM] Invalid command\n";
+    }
+    print_atoms();
 }
-
 
 void handle_uds_dgram_command() {
     char buffer[BUFFER_SIZE];
@@ -272,7 +304,6 @@ void handle_uds_dgram_command() {
 
 int main(int argc, char* argv[]) {
     int tcp_port = -1, udp_port = -1;
-    std::string uds_stream_path, uds_dgram_path;
     int opt;
 
     static struct option long_options[] = {
@@ -284,10 +315,11 @@ int main(int argc, char* argv[]) {
         {"hydrogen", required_argument, nullptr, 'h'},
         {"stream-path", required_argument, nullptr, 's'},
         {"datagram-path", required_argument, nullptr, 'd'},
+        {"save-file", required_argument, nullptr, 'f'},
         {nullptr, 0, nullptr, 0}
     };
 
-    while ((opt = getopt_long(argc, argv, "t:T:U:o:c:h:s:d:", long_options, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "t:T:U:o:c:h:s:d:f:", long_options, nullptr)) != -1) {
         switch (opt) {
             case 't': timeout_seconds = std::atoi(optarg); break;
             case 'T': tcp_port = std::atoi(optarg); break;
@@ -297,13 +329,19 @@ int main(int argc, char* argv[]) {
             case 'h': atoms["HYDROGEN"] = std::atoi(optarg); break;
             case 's': uds_stream_path = optarg; break;
             case 'd': uds_dgram_path = optarg; break;
+            case 'f':
+                save_file_path = optarg;
+                load_inventory_from_file(save_file_path);
+                break;
             default:
-                std::cerr << "Usage: " << argv[0] << " -T <tcp_port> -U <udp_port> [-t timeout] [-o O] [-c C] [-h H] [-s stream_path] [-d dgram_path]\n";
+                std::cerr << "Usage: " << argv[0]
+                          << " -T <tcp_port> -U <udp_port> [-t timeout] [-o O] [-c C] [-h H] [-s stream_path] [-d dgram_path] [-f save_file]\n";
                 return 1;
         }
     }
 
     signal(SIGALRM, timeout_handler);
+    signal(SIGINT, handle_sigint);
     reset_alarm();
 
     // TCP
@@ -344,7 +382,7 @@ int main(int argc, char* argv[]) {
         bind(uds_dgram_sock, (sockaddr*)&dgram_addr, sizeof(dgram_addr));
     }
 
-    std::cout << "Atom Warehouse (Stage 5) started.\n";
+    std::cout << "Atom Warehouse (Stage 6) started.\n";
     print_atoms();
 
     while (true) {
@@ -402,8 +440,12 @@ int main(int argc, char* argv[]) {
         }
 
         if (uds_dgram_sock != -1 && FD_ISSET(uds_dgram_sock, &read_fds)) {
-            handle_uds_dgram_command();  // assumes global uds_dgram_sock
+            handle_uds_dgram_command();
         }
+    }
+
+    if (!save_file_path.empty()) {
+        save_inventory_to_file(save_file_path);
     }
 
     close(tcp_sock);

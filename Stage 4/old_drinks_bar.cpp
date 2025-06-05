@@ -176,6 +176,8 @@ int main(int argc, char* argv[]) {
     {"carbon", required_argument, nullptr, 'c'},
     {"hydrogen", required_argument, nullptr, 'h'},
     {nullptr, 0, nullptr, 0}
+
+    
 };
 
 
